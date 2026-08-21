@@ -117,6 +117,16 @@ export async function POST(request: NextRequest) {
 
     if (upsertError) throw upsertError
 
+    // 7. Subscribe to webhooks so comment/DM automations fire
+    try {
+      const subscribeUrl = `https://graph.instagram.com/v21.0/${businessAccountId}/subscribed_apps?subscribed_fields=comments,messages&access_token=${accessToken}`
+      const subscribeRes = await fetch(subscribeUrl, { method: "POST" })
+      const subscribeData = await subscribeRes.json()
+      console.log("[v0] 🔔 Webhook subscription result:", JSON.stringify(subscribeData))
+    } catch (e) {
+      console.error("[v0] Webhook subscription failed:", e)
+    }
+
     const response = NextResponse.json({ success: true, username, userId: loginUserId, profilePic })
     response.cookies.set("insta_session", JSON.stringify({ username, userId: loginUserId }), {
       path: "/",
