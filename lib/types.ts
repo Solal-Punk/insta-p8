@@ -64,7 +64,7 @@ export interface Automation {
   name: string
   trigger_source: "comment" | "dm" | "story"
   trigger_value: string
-  trigger_type: "keyword" | "postback" | "reply_all" | "mention" | "reaction" | "reply"
+  trigger_type: "keyword" | "postback" | "reply_all" | "mention" | "reaction" | "reply" | "email"
   response_content: ResponseContent
   is_active: boolean
   created_at: string

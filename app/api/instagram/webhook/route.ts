@@ -16,6 +16,7 @@ import {
   buildFollowGateCard,
 } from "@/lib/instagram-api"
 import { generateAIReply } from "@/lib/ai-reply"
+import { extractEmail, tagSystemeContact } from "@/lib/systeme"
 import { bumpUnlockAttempt, clearUnlockAttempts, unlockKey } from "@/lib/unlock-tracking"
 
 const WEBHOOK_VERIFY_TOKEN = process.env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN
@@ -579,6 +580,7 @@ export async function POST(request: NextRequest) {
           // ---------- Match automation ----------
                     const dmAutomations = automations.filter((a: any) => a.trigger_source === "dm" || !a.trigger_source)
                     let match = null
+                    const dmEmail = triggerType === "keyword" ? extractEmail(event.message?.text) : null
 
                     const isUnlockEvent = triggerType === "postback" && triggerValue.startsWith("UNLOCK_CONTENT_")
 
@@ -607,9 +609,13 @@ export async function POST(request: NextRequest) {
                         }
                       }
                     } else {
-                      match = dmAutomations.find(
-                        (a) => a.trigger_type === "keyword" && keywordMatches(a.trigger_value, triggerValue),
-                      )
+                      // An email address in the DM wins over keyword rules (lead magnet "send me your email")
+                      if (dmEmail) match = dmAutomations.find((a) => a.trigger_type === "email")
+                      if (!match) {
+                        match = dmAutomations.find(
+                          (a) => a.trigger_type === "keyword" && keywordMatches(a.trigger_value, triggerValue),
+                        )
+                      }
                     }
 
                     if (!match) {
@@ -645,7 +651,20 @@ export async function POST(request: NextRequest) {
                     if (!match) continue
 
                     console.log(`[webhook] ✅ DM match: "${match.name}"`)
-                    const content = parseContent(match.response_content)
+                    let content = parseContent(match.response_content)
+
+                    // ---------- Email rule: add the contact to Systeme.io with a tag ----------
+                    // The tag triggers the Systeme.io rule that sends the email. If Systeme fails,
+                    // send content.on_error instead (e.g. the direct download card) so nobody is left empty-handed.
+                    if (match.trigger_type === "email" && dmEmail && content.systeme_tag_id) {
+                      const sys = await tagSystemeContact(dmEmail, Number(content.systeme_tag_id))
+                      if (sys.ok) {
+                        console.log(`[webhook] 📧 Systeme.io: contact tagged ${content.systeme_tag_id}`)
+                      } else {
+                        console.error(`[webhook] ❌ Systeme.io failed: ${sys.reason}`)
+                        if (content.on_error) content = { ...content, ...parseContent(content.on_error), card: parseContent(content.on_error).card }
+                      }
+                    }
 
                     // Mark message as seen for human-like flow
                     if (content.mark_seen !== false) {
