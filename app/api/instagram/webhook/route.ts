@@ -320,6 +320,16 @@ export async function POST(request: NextRequest) {
                     // Skip nested replies unless user opted in
                     if (parentId && content.include_replies !== true) continue
 
+                    // Lead magnet asked via comment: remember which email rule should answer
+                    // when this person sends their email in DM (one row per person, latest wins).
+                    if (content.email_rule_id) {
+                      const { error: reqErr } = await supabase.from("email_requests").upsert(
+                        { user_id: user.id, sender_id: String(senderId), automation_id: content.email_rule_id, created_at: new Date().toISOString() },
+                        { onConflict: "user_id,sender_id" },
+                      )
+                      if (reqErr) console.error("[webhook] Failed to save email request", reqErr.message)
+                    }
+
                     console.log(`[webhook] ✅ Comment match: "${match.name}"`)
 
                     // reply_mode: 'both' (default) | 'dm_only' | 'public_only'
@@ -610,7 +620,23 @@ export async function POST(request: NextRequest) {
                       }
                     } else {
                       // An email address in the DM wins over keyword rules (lead magnet "send me your email")
-                      if (dmEmail) match = dmAutomations.find((a) => a.trigger_type === "email")
+                      if (dmEmail) {
+                        // Pick the email rule of the lead magnet this person asked for (see email_requests);
+                        // otherwise the rule marked default_email, otherwise the first one.
+                        const emailRules = dmAutomations.filter((a) => a.trigger_type === "email")
+                        if (emailRules.length) {
+                          const { data: req } = await supabase
+                            .from("email_requests")
+                            .select("automation_id")
+                            .eq("user_id", user.id)
+                            .eq("sender_id", String(senderId))
+                            .maybeSingle()
+                          match =
+                            (req && emailRules.find((a) => a.id === req.automation_id)) ||
+                            emailRules.find((a) => parseContent(a.response_content).default_email === true) ||
+                            emailRules[0]
+                        }
+                      }
                       if (!match) {
                         match = dmAutomations.find(
                           (a) => a.trigger_type === "keyword" && keywordMatches(a.trigger_value, triggerValue),
